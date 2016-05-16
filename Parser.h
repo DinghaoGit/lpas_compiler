@@ -1,7 +1,16 @@
 #include "Scanner.h"
 #include "SymTable.h"
+#include <sstream>
 
 // based on LITTLE PASCAL BNF GRAMMAR VERSION 1.5
+
+#define TYPESIZE 4
+
+struct ExpRec
+{
+	char typ;
+	int loc;
+};
 
 class Parser
 {
@@ -11,9 +20,12 @@ private:
 	int		 m_curTokenNum;
 	Token    m_curToken;
 	bool     m_error;
+	int      m_curOff;
+
+	stringstream m_codeGen;
 
 public:
-	Parser(){ m_curTokenNum = -1; m_error = false; }
+	Parser(){ m_curTokenNum = -1; m_error = false; m_curOff = 0; }
 	~Parser(){}
 
 	void start()
@@ -52,12 +64,24 @@ public:
 
     void printSymbolTable() { m_symTable.printSymbolTable(); }
 
+	void printMIPS() { printf(m_codeGen.str().c_str()); }
+
 private:
+	char _getType(string s)
+	{ // look at a literal token and decide its type
+	    char ch;
+		if ('t' == s[0] || 'f' == s[0]) ch = 'b';
+		else if (string::npos != s.find('.')) ch ='f';
+		else ch = 'i';
+		return ch;
+	}
+
 	void _insertSymTable(const string& name)
 	{
 		SymData* data = m_symTable.findInLocalScope(name);
 		if (!data){
 			m_symTable.insert(name);
+			m_curOff -= TYPESIZE;
 		}
 		else{
 			printf("**** ERROR **** %s has already existed in this scope!\n", name.c_str());
@@ -186,20 +210,20 @@ private:
 		}
 	}
 
-	void factorprime(int tokenNum){
+	void factorprime(int tokenNum, ExpRec& expRec){
 		switch (tokenNum)
 		{
 		case RELOPTOK:
 			printf("factorprime\n");
 			_match(RELOPTOK);
-			factor(m_curTokenNum);
+			factor(m_curTokenNum, expRec);
 			break;
 		default:
 			break;
 		}
 	}
 
-	void relfactor(int tokenNum){
+	void relfactor(int tokenNum, ExpRec& expRec){
 		switch (tokenNum)
 		{
 		case NOTTOK:
@@ -207,8 +231,8 @@ private:
 		case LITTOK:
 		case LPTOK:
 			printf("relfactor\n");
-			factor(m_curTokenNum);
-			factorprime(m_curTokenNum);
+			factor(m_curTokenNum, expRec);
+			factorprime(m_curTokenNum, expRec);
 			break;
 		default:
 			_error("relfactor");
@@ -216,16 +240,16 @@ private:
 		}
 	}
 
-	void termprime(int tokenNum){
+	void termprime(int tokenNum, ExpRec& expRec){
 		if (MULOPTOK == tokenNum){
 			printf("termprime\n");
 			_match(MULOPTOK);
-			relfactor(m_curTokenNum);
-			termprime(m_curTokenNum);
+			relfactor(m_curTokenNum, expRec);
+			termprime(m_curTokenNum, expRec);
 		}
 	}
 
-	void term(int tokenNum){
+	void term(int tokenNum, ExpRec& expRec){
 		switch (tokenNum)
 		{
 		case NOTTOK:
@@ -233,8 +257,8 @@ private:
 		case LITTOK:
 		case LPTOK:
 			printf("term\n");
-			relfactor(m_curTokenNum);
-			termprime(m_curTokenNum);
+			relfactor(m_curTokenNum, expRec);
+			termprime(m_curTokenNum, expRec);
 			break;
 		default:
 			_error("term");
@@ -242,7 +266,7 @@ private:
 		}
 	}
 
-	void express(int tokenNum){
+	void express(int tokenNum, ExpRec& expRec){
 		switch (tokenNum)
 		{
 		case NOTTOK:
@@ -250,8 +274,8 @@ private:
 		case LITTOK:
 		case LPTOK:
 			printf("express\n");
-			term(m_curTokenNum);
-			expprime(m_curTokenNum);
+			term(m_curTokenNum, expRec);
+			expprime(m_curTokenNum, expRec);
 			break;
 		default:
 			_error("express");
@@ -259,26 +283,40 @@ private:
 		}
 	}
 
-	void factor(int tokenNum){
+	void factor(int tokenNum, ExpRec& expRec){
 		switch (tokenNum)
 		{
 		case NOTTOK:
 			printf("factor_not_factor\n");
 			_match(NOTTOK);
-			factor(m_curTokenNum);
+			factor(m_curTokenNum, expRec);
 			break;
 		case IDTOK:
-			printf("factor_idnonterm\n");
-			idnonterm(m_curTokenNum);
+			{
+				printf("factor_idnonterm\n");
+				SymData* data = m_symTable.findInAllScopes(m_curToken.lexeme);
+				idnonterm(m_curTokenNum);
+				if (data){
+					expRec.typ = data->type;
+					expRec.loc = data->offset;
+				}
+			}
 			break;
 		case LITTOK:
 			printf("factor_LITTOK\n");
+			{
+				expRec.loc = m_curOff;
+				expRec.typ = _getType(m_curToken.lexeme);
+				m_codeGen << "li $t0 " << m_curToken.lexeme << endl;
+				m_codeGen << "sw $t0 " << expRec.loc << "($fp)" << endl;
+				m_curOff -= TYPESIZE;
+			}
 			_match(LITTOK);
 			break;
 		case LPTOK:
 			printf("factor_express\n");
 			_match(LPTOK);
-			express(m_curTokenNum);
+			express(m_curTokenNum, expRec);
 			_match(RPTOK);
 			break;
 		default:
@@ -287,12 +325,31 @@ private:
 		}
 	}
 
-	void expprime(int tokenNum){
+	void expprime(int tokenNum, ExpRec& expRec){
 		if (ADDOPTOK == tokenNum){
-			printf("expprime\n");
-			_match(ADDOPTOK);
-			term(m_curTokenNum);
-			expprime(m_curTokenNum);
+			{
+				ExpRec lop = expRec; // copy the incoming parameter into a local var
+         		char ch = m_curToken.lexeme[0]; // remember the addop
+         		string st; // which operation will we generate?
+         		switch(ch)
+         		{
+				case '+': st = "add"; break;
+				case '-': st = "mul"; break;
+				case 'o': st = "bor"; break;
+				}
+
+				printf("expprime\n");
+				_match(ADDOPTOK);
+         		term(m_curTokenNum, expRec); // get the right operand
+
+				m_codeGen << "lw $t0 " << lop.loc << "($fp)" << endl;
+				m_codeGen << "lw $t1 " << expRec.loc << "($fp)" << endl;
+				m_codeGen << st	<< "$t2 $t0 $t1" << endl;
+				m_codeGen << "sw $t2 " << m_curOff << "($fp)" << endl;
+				m_curOff -= TYPESIZE;
+				expRec.loc = m_curOff;
+			}
+			expprime(m_curTokenNum, expRec);
 		}
 	}
 
@@ -301,7 +358,8 @@ private:
 			printf("assignstat\n");
 			idnonterm(m_curTokenNum);
 			_match(ASTOK);
-			express(m_curTokenNum);
+			ExpRec expRec;
+			express(m_curTokenNum, expRec);
 		}
 		else{
 			_error("assignstat");
@@ -314,7 +372,8 @@ private:
 		case IFTOK:
 			printf("ifstat\n");
 			_match(IFTOK);
-			express(m_curTokenNum);
+			ExpRec expRec;
+			express(m_curTokenNum, expRec);
 			_match(THENTOK);
 			statmt(m_curTokenNum);
 			break;
@@ -349,7 +408,8 @@ private:
 			break;
 		case IDTOK:
 			printf("writeexp_express\n");
-			express(m_curTokenNum);
+			ExpRec expRec;
+			express(m_curTokenNum, expRec);
 			break;
 		}
 	}
@@ -392,7 +452,8 @@ private:
 		if (WHILETOK == tokenNum){
 			printf("whilest\n");
 			_match(WHILETOK);
-			express(m_curTokenNum);
+			ExpRec expRec;
+			express(m_curTokenNum, expRec);
 			_match(DOTOK);
 			statmt(m_curTokenNum);
 		}

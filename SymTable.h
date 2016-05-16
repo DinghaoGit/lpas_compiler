@@ -16,10 +16,11 @@ using namespace std;
 
 struct SymData
 {
+    string    name;
     int       type;
+    int       offset;
     int       scopeIdx;
     int       scopeDepth;
-    void*     location;
 };
 
 class SymTable
@@ -42,11 +43,16 @@ public:
     void insert(const string& name, int type = 0)
     {
     	int curScope = m_scopeStack.top();
+        auto& stArr = m_symbolTable[name];
+        auto& ssArr = m_scopeSymols[curScope];
 		SymData sym;
+        sym.name = name;
 		sym.type = type;
+        sym.offset = -4 * (int)ssArr.size();
 		sym.scopeIdx = curScope;
 		sym.scopeDepth = m_scopeStack.size();
-		m_symbolTable[name].push_back(sym);
+		stArr.push_back(sym);
+        ssArr.push_back(&stArr.back());
 	}
 
     SymData* findInLocalScope(const string& name)
@@ -83,12 +89,12 @@ public:
     void printSymbolTable()
     {
         printf("SymbolTable Dump\n");
-    	for (auto it(m_symbolTable.begin()),itEnd(m_symbolTable.end());
+    	for (auto it(m_scopeSymols.begin()),itEnd(m_scopeSymols.end());
     		it != itEnd; ++it)
     	{
             auto& arr = it->second;
-			for (SymData& sym : arr){
-				printf("SCOPE:%d SYMBOL:%s\n", sym.scopeIdx, it->first.c_str());
+			for (SymData* sym : arr){
+				printf("SCOPE:%d SYMBOL:%s OFFSET:%d\n", sym->scopeIdx, sym->name.c_str(), sym->offset);
 			}
     	}
     }
@@ -103,4 +109,7 @@ private:
 
 	unordered_map<string, vector<SymData> >
 				m_symbolTable; // hash table using for storing all symbol datas
+
+    unordered_map<int, vector<SymData*> >
+                m_scopeSymols; // hash table using for storing all symbol data poiters of one scope
 };

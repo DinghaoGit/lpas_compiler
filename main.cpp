@@ -9,6 +9,7 @@ int main()
     Parser parser;
     parser.start();
     parser.printSymbolTable();
+    parser.printMIPS();
 
     getchar();
     return 0;
