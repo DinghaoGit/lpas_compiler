@@ -21,11 +21,19 @@ private:
 	Token    m_curToken;
 	bool     m_error;
 	int      m_curOff;
+	int      m_curStrLabel;
 
 	stringstream m_codeGen;
-
+	stringstream m_codeGenData;
 public:
-	Parser(){ m_curTokenNum = -1; m_error = false; m_curOff = 0; }
+	Parser()
+	{
+		m_curTokenNum = -1;
+		m_error = false;
+		m_curOff = 0;
+		m_curStrLabel = 1;
+	}
+
 	~Parser(){}
 
 	void start()
@@ -64,7 +72,37 @@ public:
 
     void printSymbolTable() { m_symTable.printSymbolTable(); }
 
-	void printMIPS() { printf(m_codeGen.str().c_str()); }
+	void generateMIPSCode()
+	{
+        ofstream fout("MIPS.txt");
+
+		fout << "#Prolog:" << endl;
+		fout << ".text" << endl;
+		fout << ".globl  main" << endl;
+		fout << "main:" << endl;
+		fout << "move  $fp  $sp    #frame pointer will be start of active stack" << endl;
+		fout << "la  $a0  ProgStart" << endl;
+		fout << "li  $v0  4" << endl;
+		fout << "syscall" << endl;
+		fout << "#End of Prolog" << endl << endl;
+
+		fout << m_codeGen.str() << endl;
+
+		fout << "#Postlog:" << endl;
+		fout << "la  $a0  ProgEnd" << endl;
+		fout << "li  $v0  4" << endl;
+		fout << "syscall" << endl;
+		fout << "li  $v0  10" << endl;
+		fout << "syscall" << endl;
+		fout << ".data" << endl;
+		fout << "ProgStart:  .asciiz  \"Program Start\\n\"" << endl;
+		fout << "ProgEnd:   .asciiz  \"Program  End\\n\"" << endl;
+
+		fout << m_codeGenData.str() << endl;
+
+        fout.clear();
+        fout.close();
+	}
 
 private:
 	char _getType(string s)
@@ -76,11 +114,26 @@ private:
 		return ch;
 	}
 
-	void _insertSymTable(const string& name)
+	string _genStringLabel()
+	{
+		stringstream ss;
+		ss << "strLabel" << m_curStrLabel << ":  .asciiz  ";
+		++m_curStrLabel;
+		return ss.str();
+	}
+
+	string _getStringLabelByIdx(int idx)
+	{
+		stringstream ss;
+		ss << "strLabel" << idx;
+		return ss.str();
+	}
+
+	void _insertSymTable(const string& name, bool isVar)
 	{
 		SymData* data = m_symTable.findInLocalScope(name);
 		if (!data){
-			m_symTable.insert(name);
+			m_symTable.insert(name, 0, isVar);
 			m_curOff -= TYPESIZE;
 		}
 		else{
@@ -130,7 +183,7 @@ private:
 			_match(EQUALTOK);
 			_match(LITTOK);
 			_match(SMCLNTOK);
-			_insertSymTable(tmp.lexeme);
+			_insertSymTable(tmp.lexeme, false);
 		}else{
 			_error("constdecl");
 		}
@@ -164,7 +217,7 @@ private:
 			_match(COLONTOK);
 			_match(BASTYPETOK);
 			_match(SMCLNTOK);
-			_insertSymTable(tmp.lexeme);
+			_insertSymTable(tmp.lexeme, true);
 		}else{
 			_error("vardecl");
 		}
@@ -307,8 +360,8 @@ private:
 			{
 				expRec.loc = m_curOff;
 				expRec.typ = _getType(m_curToken.lexeme);
-				m_codeGen << "li $t0 " << m_curToken.lexeme << endl;
-				m_codeGen << "sw $t0 " << expRec.loc << "($fp)" << endl;
+				m_codeGen << "li  $t0  " << m_curToken.lexeme << endl;
+				m_codeGen << "sw  $t0  " << expRec.loc << "($fp)" << endl;
 				m_curOff -= TYPESIZE;
 			}
 			_match(LITTOK);
@@ -342,10 +395,10 @@ private:
 				_match(ADDOPTOK);
          		term(m_curTokenNum, expRec); // get the right operand
 
-				m_codeGen << "lw $t0 " << lop.loc << "($fp)" << endl;
-				m_codeGen << "lw $t1 " << expRec.loc << "($fp)" << endl;
-				m_codeGen << st	<< "$t2 $t0 $t1" << endl;
-				m_codeGen << "sw $t2 " << m_curOff << "($fp)" << endl;
+				m_codeGen << "lw  $t0  " << lop.loc << "($fp)" << endl;
+				m_codeGen << "lw  $t1  " << expRec.loc << "($fp)" << endl;
+				m_codeGen << st	<< "  $t2  $t0  $t1" << endl;
+				m_codeGen << "sw  $t2  " << m_curOff << "($fp)" << endl;
 				m_curOff -= TYPESIZE;
 				expRec.loc = m_curOff;
 			}
@@ -399,29 +452,37 @@ private:
 		}
 	}
 
-	void writeexp(int tokenNum){
+	void writeexp(int tokenNum, ExpRec& expRec){
 		switch (tokenNum)
 		{
 		case STRLITTOK:
 			printf("writeexp_string\n");
+			expRec.typ = 's';
+			expRec.loc = m_curStrLabel;
+			m_codeGenData << _genStringLabel() << m_curToken.lexeme << endl;
 			_match(STRLITTOK);
 			break;
 		case IDTOK:
 			printf("writeexp_express\n");
-			ExpRec expRec;
 			express(m_curTokenNum, expRec);
 			break;
 		}
 	}
 
-	void writestat(int tokenNum){
+	void writestat(int tokenNum, ExpRec& expRec){
 		switch (tokenNum)
 		{
 		case WRITETOK:
 			printf("writestat\n");
 			_match(WRITETOK);
 			_match(LPTOK);
-			writeexp(m_curTokenNum);
+			writeexp(m_curTokenNum, expRec);
+			if ('s' == expRec.typ)
+			{
+				m_codeGen << "la  $t0  " << _getStringLabelByIdx(expRec.loc) << endl;
+				m_codeGen << "li  $v0  4" << endl;
+				m_codeGen << "syscall" << endl;
+			}
 			_match(RPTOK);
 			break;
 		default:
@@ -479,7 +540,8 @@ private:
 			break;
 		case WRITETOK:
 			printf("statmt_writestat\n");
-			writestat(m_curTokenNum);
+            ExpRec expRec;
+			writestat(m_curTokenNum, expRec);
 			break;
 		case VARTOK:
 		case BEGTOK:

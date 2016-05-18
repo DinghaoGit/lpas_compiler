@@ -21,6 +21,7 @@ struct SymData
     int       offset;
     int       scopeIdx;
     int       scopeDepth;
+    bool      isVar;
 };
 
 class SymTable
@@ -40,7 +41,7 @@ public:
 		m_scopeStack.pop();
     }
 
-    void insert(const string& name, int type = 0)
+    void insert(const string& name, int type = 0, bool isVar = true)
     {
     	int curScope = m_scopeStack.top();
         auto& stArr = m_symbolTable[name];
