@@ -25,6 +25,7 @@ private:
 
 	stringstream m_codeGen;
 	stringstream m_codeGenData;
+
 public:
 	Parser()
 	{
@@ -36,6 +37,7 @@ public:
 
 	~Parser(){}
 
+	// PROGTOK IDTOK '(' ')' ';' CONSTPART VARPART BEGTOK stat morestats  ENDTOK '.'
 	void start()
 	{
 	    m_scanner.scan("input.txt");
@@ -57,7 +59,6 @@ public:
 			statmt(m_curTokenNum);
 			morestats(m_curTokenNum);
 			_match(ENDTOK);
-			_match(IDTOK);
 			_match(DOTTOK);
 	    }
 	    else{
@@ -96,7 +97,8 @@ public:
 		fout << "syscall" << endl;
 		fout << ".data" << endl;
 		fout << "ProgStart:  .asciiz  \"Program Start\\n\"" << endl;
-		fout << "ProgEnd:   .asciiz  \"Program  End\\n\"" << endl;
+		fout << "ProgEnd:  .asciiz  \"Program  End\\n\"" << endl;
+		fout << "CR:  .asciiz  \"\\n\"" << endl;
 
 		fout << m_codeGenData.str() << endl;
 
@@ -129,11 +131,11 @@ private:
 		return ss.str();
 	}
 
-	void _insertSymTable(const string& name, bool isVar)
+	void _insertSymTable(const string& name, char type, bool isVar)
 	{
 		SymData* data = m_symTable.findInLocalScope(name);
 		if (!data){
-			m_symTable.insert(name, 0, isVar);
+			m_symTable.insert(name, type, isVar);
 			m_curOff -= TYPESIZE;
 		}
 		else{
@@ -174,6 +176,7 @@ private:
         m_error = true;
 	}
 
+	// IDTOK '=' LITTOK ';'
 	void constdecl(int tokenNum){
 		if (IDTOK == tokenNum){
 			printf("constdecl\n");
@@ -183,12 +186,13 @@ private:
 			_match(EQUALTOK);
 			_match(LITTOK);
 			_match(SMCLNTOK);
-			_insertSymTable(tmp.lexeme, false);
+			_insertSymTable(tmp.lexeme, _getType(tmp.lexeme), false);
 		}else{
 			_error("constdecl");
 		}
 	}
 
+	// constdecl moreconsdecls  |  <empty>
 	void moreconsdecls(int tokenNum){
 		if (IDTOK == tokenNum){
 			printf("moreconsdecls\n");
@@ -197,17 +201,17 @@ private:
 		}
 	}
 
+	// CONSTTOK constdecl moreconsdecls | <empty>
 	void CONSTPART(int tokenNum){
 		if (CONSTTOK == tokenNum){
 			printf("CONSTPART\n");
 			_match(CONSTTOK);
 			constdecl(m_curTokenNum);
 			moreconsdecls(m_curTokenNum);
-		}else{
-			_error("CONSTPART");
 		}
 	}
 
+	// IDTOK ':' BASTYPETOK  ';'
 	void vardecl(int tokenNum){
 		if (IDTOK == tokenNum){
 			printf("vardecl\n");
@@ -217,12 +221,13 @@ private:
 			_match(COLONTOK);
 			_match(BASTYPETOK);
 			_match(SMCLNTOK);
-			_insertSymTable(tmp.lexeme, true);
+			_insertSymTable(tmp.lexeme, _getType(tmp.lexeme), true);
 		}else{
 			_error("vardecl");
 		}
 	}
 
+	// vardecl morevardecls | <empty>
 	void morevardecls(int tokenNum){
 		if (IDTOK == tokenNum){
 			printf("morevardecls\n");
@@ -231,6 +236,7 @@ private:
 		}
 	}
 
+	// VARTOK vardecl morevardecls  |  <empty>
 	void VARPART(int tokenNum){
 		if (VARTOK == tokenNum){
 			printf("VARPART\n");
@@ -240,6 +246,7 @@ private:
 		}
 	}
 
+	// IDTOK
 	void idnonterm(int tokenNum){
 		if (IDTOK == tokenNum){
 			printf("idnonterm\n");
@@ -263,6 +270,7 @@ private:
 		}
 	}
 
+	// RELOPTOK  factor  |  <empty>
 	void factorprime(int tokenNum, ExpRec& expRec){
 		switch (tokenNum)
 		{
@@ -276,6 +284,7 @@ private:
 		}
 	}
 
+	// factor factorprime
 	void relfactor(int tokenNum, ExpRec& expRec){
 		switch (tokenNum)
 		{
@@ -293,6 +302,7 @@ private:
 		}
 	}
 
+	// MULOPTOK  relfactor termprime  |  <empty> 
 	void termprime(int tokenNum, ExpRec& expRec){
 		if (MULOPTOK == tokenNum){
 			printf("termprime\n");
@@ -302,6 +312,7 @@ private:
 		}
 	}
 
+	// relfactor termprime
 	void term(int tokenNum, ExpRec& expRec){
 		switch (tokenNum)
 		{
@@ -319,6 +330,7 @@ private:
 		}
 	}
 
+	// term expprime
 	void express(int tokenNum, ExpRec& expRec){
 		switch (tokenNum)
 		{
@@ -336,6 +348,7 @@ private:
 		}
 	}
 
+	// NOTTOK  factor  |  idnonterm  |  LITTOK  |  '('  express  ')' 
 	void factor(int tokenNum, ExpRec& expRec){
 		switch (tokenNum)
 		{
@@ -378,6 +391,7 @@ private:
 		}
 	}
 
+	// ADDOPTOK  term expprime  |  <empty>  
 	void expprime(int tokenNum, ExpRec& expRec){
 		if (ADDOPTOK == tokenNum){
 			{
@@ -406,19 +420,31 @@ private:
 		}
 	}
 
+	// idnonterm  ASTOK express
 	void assignstat(int tokenNum){
 		if (IDTOK == tokenNum){
 			printf("assignstat\n");
+			SymData* data = m_symTable.findInAllScopes(m_curToken.lexeme);
+			if (!data){
+				printf("ERROR %s not found in all scopes\n", m_curToken.lexeme.c_str());
+				return;
+			}
 			idnonterm(m_curTokenNum);
 			_match(ASTOK);
 			ExpRec expRec;
 			express(m_curTokenNum, expRec);
+			if (data->type != expRec.typ){
+				printf("WARNING types not match\n");
+			}
+			m_codeGen << "lw  $t0  " << expRec.loc << "($fp)" << endl;
+			m_codeGen << "sw  $t0  " << data->offset << "($fp)" << endl;
 		}
 		else{
 			_error("assignstat");
 		}
 	}
 
+	// IFTOK express THENTOK  stat 
 	void ifstat(int tokenNum){
 		switch (tokenNum)
 		{
@@ -436,6 +462,7 @@ private:
 		}
 	}
 
+	// READTOK '(' idnonterm ')'
 	void readstat(int tokenNum){
 		switch (tokenNum)
 		{
@@ -452,6 +479,7 @@ private:
 		}
 	}
 
+	// STRLITTOK  |  express
 	void writeexp(int tokenNum, ExpRec& expRec){
 		switch (tokenNum)
 		{
@@ -469,11 +497,12 @@ private:
 		}
 	}
 
+	// WRITETOK '('  writeexp ')' 
 	void writestat(int tokenNum, ExpRec& expRec){
-		switch (tokenNum)
+		if (WRITETOK == tokenNum)
 		{
-		case WRITETOK:
 			printf("writestat\n");
+			bool isWriteln = (m_curToken.lexeme == "writeln");
 			_match(WRITETOK);
 			_match(LPTOK);
 			writeexp(m_curTokenNum, expRec);
@@ -483,14 +512,33 @@ private:
 				m_codeGen << "li  $v0  4" << endl;
 				m_codeGen << "syscall" << endl;
 			}
+			else if ('i' == expRec.typ)
+            {
+				m_codeGen << "la  $t0  " << expRec.loc << "($fp)" << endl;
+				m_codeGen << "li  $v0  1" << endl;
+				m_codeGen << "syscall" << endl;
+            }
+			else if ('f' == expRec.typ)
+            {
+				m_codeGen << "la  $t0  " << expRec.loc << "($fp)" << endl;
+				m_codeGen << "li  $v0  2" << endl;
+				m_codeGen << "syscall" << endl;
+            }
+            if (isWriteln)
+            {
+                m_codeGen << "la  $t0  CR" << endl;
+                m_codeGen << "li  $v0  4" << endl;
+                m_codeGen << "syscall" << endl;
+            }
 			_match(RPTOK);
-			break;
-		default:
+		}
+		else
+		{
 			_error("writestat");
-			break;
 		}
 	}
 
+	// BEGINTOK stats ENDTOK 
 	void blockst(int tokenNum){
 		switch (tokenNum)
 		{
@@ -509,6 +557,7 @@ private:
 		}
 	}
 
+	// WHILETOK express DOTOK stat 
 	void whilest(int tokenNum){
 		if (WHILETOK == tokenNum){
 			printf("whilest\n");
@@ -523,6 +572,7 @@ private:
 		}
 	}
 
+	// assignstat  |  ifstat  |  readstat  |  writestat |  blockst  | whilest  
 	void statmt(int tokenNum){
 		switch (tokenNum)
 		{
@@ -558,6 +608,7 @@ private:
 		}
 	}
 
+	// ';' statmt  morestats  |  <empty>
 	void morestats(int tokenNum){
 		if (SMCLNTOK == tokenNum){
 			printf("morestats\n");

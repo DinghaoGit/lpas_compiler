@@ -17,7 +17,7 @@ using namespace std;
 struct SymData
 {
     string    name;
-    int       type;
+    char      type;
     int       offset;
     int       scopeIdx;
     int       scopeDepth;
@@ -41,7 +41,7 @@ public:
 		m_scopeStack.pop();
     }
 
-    void insert(const string& name, int type = 0, bool isVar = true)
+    void insert(const string& name, char type = 0, bool isVar = true)
     {
     	int curScope = m_scopeStack.top();
         auto& stArr = m_symbolTable[name];
