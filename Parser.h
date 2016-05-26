@@ -124,6 +124,15 @@ private:
 		return ss.str();
 	}
 
+	string _genJumpLabel()
+	{
+		static int curIdx = 0;
+		stringstream ss;
+		ss << "jumpLabel" << curIdx;
+		++curIdx;
+		return ss.str();
+	}
+
 	string _getStringLabelByIdx(int idx)
 	{
 		stringstream ss;
@@ -272,15 +281,26 @@ private:
 
 	// RELOPTOK  factor  |  <empty>
 	void factorprime(int tokenNum, ExpRec& expRec){
-		switch (tokenNum)
+		if (RELOPTOK == tokenNum)
 		{
-		case RELOPTOK:
+			ExpRec lop = expRec;
+			bool smallerThan = ("<" == m_curToken.lexeme ? true : false);
+
 			printf("factorprime\n");
 			_match(RELOPTOK);
 			factor(m_curTokenNum, expRec);
-			break;
-		default:
-			break;
+
+			m_codeGen << "lw  $t0  " << lop.loc << "($fp)" << endl;
+			m_codeGen << "lw  $t1  " << expRec.loc << "($fp)" << endl;
+			if (smallerThan){
+				m_codeGen << "slt  $t2  $t0  $t1" << endl;
+			}else{
+				m_codeGen << "slt  $t2  $t1  $t0" << endl;
+			}
+			m_codeGen << "sw  $t2  " << m_curOff << "($fp)" << endl;
+			m_curOff -= TYPESIZE;
+			expRec.loc = m_curOff;
+			expRec.typ = 'b';
 		}
 	}
 
@@ -302,12 +322,33 @@ private:
 		}
 	}
 
-	// MULOPTOK  relfactor termprime  |  <empty> 
+	// MULOPTOK  relfactor termprime  |  <empty>
 	void termprime(int tokenNum, ExpRec& expRec){
 		if (MULOPTOK == tokenNum){
-			printf("termprime\n");
-			_match(MULOPTOK);
-			relfactor(m_curTokenNum, expRec);
+			{
+				ExpRec lop = expRec;
+				char ch = m_curToken.lexeme[0];
+				string st;
+				switch(ch)
+				{
+				case 'm': st = "rem"; break; // mod
+				case '/':
+				case 'd': st = "div"; break;
+				case 'a': st = "and"; break;
+				case '*': st = "mult"; break;
+				}
+
+				printf("termprime\n");
+				_match(MULOPTOK);
+				relfactor(m_curTokenNum, expRec);
+
+                m_codeGen << "lw  $t0  " << lop.loc << "($fp)" << endl;
+				m_codeGen << "lw  $t1  " << expRec.loc << "($fp)" << endl;
+				m_codeGen << st	<< "  $t2  $t0  $t1" << endl;
+				m_codeGen << "sw  $t2  " << m_curOff << "($fp)" << endl;
+				m_curOff -= TYPESIZE;
+				expRec.loc = m_curOff;
+			}
 			termprime(m_curTokenNum, expRec);
 		}
 	}
@@ -348,7 +389,7 @@ private:
 		}
 	}
 
-	// NOTTOK  factor  |  idnonterm  |  LITTOK  |  '('  express  ')' 
+	// NOTTOK  factor  |  idnonterm  |  LITTOK  |  '('  express  ')'
 	void factor(int tokenNum, ExpRec& expRec){
 		switch (tokenNum)
 		{
@@ -391,7 +432,7 @@ private:
 		}
 	}
 
-	// ADDOPTOK  term expprime  |  <empty>  
+	// ADDOPTOK  term expprime  |  <empty>
 	void expprime(int tokenNum, ExpRec& expRec){
 		if (ADDOPTOK == tokenNum){
 			{
@@ -402,7 +443,7 @@ private:
          		{
 				case '+': st = "add"; break;
 				case '-': st = "mul"; break;
-				case 'o': st = "bor"; break;
+				case 'o': st = "or"; break;
 				}
 
 				printf("expprime\n");
@@ -444,21 +485,28 @@ private:
 		}
 	}
 
-	// IFTOK express THENTOK  stat 
+	// IFTOK express THENTOK  stat
 	void ifstat(int tokenNum){
-		switch (tokenNum)
-		{
-		case IFTOK:
+		if (IFTOK == tokenNum){
 			printf("ifstat\n");
 			_match(IFTOK);
 			ExpRec expRec;
 			express(m_curTokenNum, expRec);
+
+			if ('b' != expRec.typ){
+				printf("WARNING types not match in ifstat\n");
+			}
+			m_codeGen << "lw  $t0  " << m_curOff << "($fp)" << endl;
+			string label = _genJumpLabel();
+			m_codeGen << "beq  $t0  $0  " << label << endl;
+
 			_match(THENTOK);
 			statmt(m_curTokenNum);
-			break;
-		default:
+
+			m_codeGen << label << ":" << endl;
+		}
+		else{
 			_error("ifstat");
-			break;
 		}
 	}
 
@@ -497,7 +545,7 @@ private:
 		}
 	}
 
-	// WRITETOK '('  writeexp ')' 
+	// WRITETOK '('  writeexp ')'
 	void writestat(int tokenNum, ExpRec& expRec){
 		if (WRITETOK == tokenNum)
 		{
@@ -538,7 +586,7 @@ private:
 		}
 	}
 
-	// BEGINTOK stats ENDTOK 
+	// BEGINTOK stats ENDTOK
 	void blockst(int tokenNum){
 		switch (tokenNum)
 		{
@@ -557,22 +605,40 @@ private:
 		}
 	}
 
-	// WHILETOK express DOTOK stat 
+	// WHILETOK express DOTOK stat
 	void whilest(int tokenNum){
 		if (WHILETOK == tokenNum){
 			printf("whilest\n");
 			_match(WHILETOK);
+
+			// Generate a new label, remember it, AND lay it down
+			string labelStart = _genJumpLabel();
+			m_codeGen << labelStart << ":" << endl;
+
+			// Evaluate the expression, leaving the value on the stack. Check Boolean.
 			ExpRec expRec;
 			express(m_curTokenNum, expRec);
+
+			if ('b' != expRec.typ){
+				printf("WARNING types not match in whilest\n");
+			}
+			m_codeGen << "lw  $t0  " << m_curOff << "($fp)" << endl;
+			string labelEnd = _genJumpLabel();
+			// CodeGen a jump to this label if t0 == false. 
+			m_codeGen << "beq  $t0  $0  " << labelEnd << endl;
+
 			_match(DOTOK);
 			statmt(m_curTokenNum);
+
+			m_codeGen << "j  " << labelStart << endl;
+			m_codeGen << labelEnd << ":" << endl;
 		}
 		else{
 			_error("whilest");
 		}
 	}
 
-	// assignstat  |  ifstat  |  readstat  |  writestat |  blockst  | whilest  
+	// assignstat  |  ifstat  |  readstat  |  writestat |  blockst  | whilest
 	void statmt(int tokenNum){
 		switch (tokenNum)
 		{
