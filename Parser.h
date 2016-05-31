@@ -1,6 +1,7 @@
 #include "Scanner.h"
 #include "SymTable.h"
 #include <sstream>
+#include <string.h>
 
 // based on LITTLE PASCAL BNF GRAMMAR VERSION 1.5
 
@@ -140,6 +141,33 @@ private:
 		return ss.str();
 	}
 
+	// used for generating MIPS code
+	void _genCode( ExpRec* expRec,
+					const char* p1,
+					const char* p2 = nullptr,
+					const char* p3 = nullptr,
+					const char* p4 = nullptr)
+	{
+		// Floating Point Arithmetic on MIPS
+		if (expRec && 'f' == expRec->typ){
+			if (0 == strcmp(p1, "lw")) p1 = "l.s";
+			else if (0 == strcmp(p1, "li")) p1 = "li.s";
+			else if (0 == strcmp(p1, "sw")) p1 = "s.s";
+		}
+		if (p1) m_codeGen << p1 << "  ";
+		if (p2) m_codeGen << p2 << "  ";
+		if (p3) m_codeGen << p3 << "  ";
+		if (p4) m_codeGen << p4;
+		m_codeGen << endl;
+	}
+
+	// make a offset + $fp string
+	const char* _mkfp(int offset){
+		static char tmp[256];
+		sprintf(tmp, "%d($fp)", offset);
+		return tmp;
+	}
+
 	void _insertSymTable(const string& name, char type, bool isVar)
 	{
 		SymData* data = m_symTable.findInLocalScope(name);
@@ -224,13 +252,14 @@ private:
 	void vardecl(int tokenNum){
 		if (IDTOK == tokenNum){
 			printf("vardecl\n");
-			Token tmp;
-			tmp.lexeme = m_curToken.lexeme;
+            string symName = m_curToken.lexeme;
+            char symType = 'i';
 			_match(IDTOK);
 			_match(COLONTOK);
+            if("real" == m_curToken.lexeme) symType = 'f';
 			_match(BASTYPETOK);
 			_match(SMCLNTOK);
-			_insertSymTable(tmp.lexeme, _getType(tmp.lexeme), true);
+			_insertSymTable(symName, symType, true);
 		}else{
 			_error("vardecl");
 		}
@@ -290,14 +319,14 @@ private:
 			_match(RELOPTOK);
 			factor(m_curTokenNum, expRec);
 
-			m_codeGen << "lw  $t0  " << lop.loc << "($fp)" << endl;
-			m_codeGen << "lw  $t1  " << expRec.loc << "($fp)" << endl;
+			_genCode(&expRec, "lw", "$t0", _mkfp(lop.loc));
+			_genCode(&expRec, "lw", "$t1", _mkfp(expRec.loc));
 			if (smallerThan){
-				m_codeGen << "slt  $t2  $t0  $t1" << endl;
+				_genCode(&expRec, "slt", "$t2", "$t0", "$t1");
 			}else{
-				m_codeGen << "slt  $t2  $t1  $t0" << endl;
+				_genCode(&expRec, "slt", "$t2", "$t1", "$t0");
 			}
-			m_codeGen << "sw  $t2  " << m_curOff << "($fp)" << endl;
+			_genCode(&expRec, "sw", "$t2", _mkfp(m_curOff));
 			m_curOff -= TYPESIZE;
 			expRec.loc = m_curOff;
 			expRec.typ = 'b';
@@ -342,10 +371,10 @@ private:
 				_match(MULOPTOK);
 				relfactor(m_curTokenNum, expRec);
 
-                m_codeGen << "lw  $t0  " << lop.loc << "($fp)" << endl;
-				m_codeGen << "lw  $t1  " << expRec.loc << "($fp)" << endl;
-				m_codeGen << st	<< "  $t2  $t0  $t1" << endl;
-				m_codeGen << "sw  $t2  " << m_curOff << "($fp)" << endl;
+				_genCode(&expRec, "lw", "$t0", _mkfp(lop.loc));
+				_genCode(&expRec, "lw", "$t1", _mkfp(expRec.loc));
+				_genCode(&expRec, st.c_str(), "$t2", "$t0", "$t1");
+				_genCode(&expRec, "sw", "$t2", _mkfp(m_curOff));
 				m_curOff -= TYPESIZE;
 				expRec.loc = m_curOff;
 			}
@@ -414,8 +443,8 @@ private:
 			{
 				expRec.loc = m_curOff;
 				expRec.typ = _getType(m_curToken.lexeme);
-				m_codeGen << "li  $t0  " << m_curToken.lexeme << endl;
-				m_codeGen << "sw  $t0  " << expRec.loc << "($fp)" << endl;
+				_genCode(&expRec, "li", "$t0", m_curToken.lexeme.c_str());
+				_genCode(&expRec, "sw", "$t0", _mkfp(expRec.loc));
 				m_curOff -= TYPESIZE;
 			}
 			_match(LITTOK);
@@ -450,10 +479,10 @@ private:
 				_match(ADDOPTOK);
          		term(m_curTokenNum, expRec); // get the right operand
 
-				m_codeGen << "lw  $t0  " << lop.loc << "($fp)" << endl;
-				m_codeGen << "lw  $t1  " << expRec.loc << "($fp)" << endl;
-				m_codeGen << st	<< "  $t2  $t0  $t1" << endl;
-				m_codeGen << "sw  $t2  " << m_curOff << "($fp)" << endl;
+				_genCode(&expRec, "lw", "$t0", _mkfp(lop.loc));
+				_genCode(&expRec, "lw", "$t1", _mkfp(expRec.loc));
+				_genCode(&expRec, st.c_str(), "$t2", "$t0", "$t1");
+				_genCode(&expRec, "sw", "$t2", _mkfp(m_curOff));
 				m_curOff -= TYPESIZE;
 				expRec.loc = m_curOff;
 			}
@@ -477,8 +506,8 @@ private:
 			if (data->type != expRec.typ){
 				printf("WARNING types not match\n");
 			}
-			m_codeGen << "lw  $t0  " << expRec.loc << "($fp)" << endl;
-			m_codeGen << "sw  $t0  " << data->offset << "($fp)" << endl;
+			_genCode(&expRec, "lw", "$t0", _mkfp(expRec.loc));
+			_genCode(&expRec, "sw", "$t0", _mkfp(data->offset));
 		}
 		else{
 			_error("assignstat");
@@ -496,14 +525,15 @@ private:
 			if ('b' != expRec.typ){
 				printf("WARNING types not match in ifstat\n");
 			}
-			m_codeGen << "lw  $t0  " << m_curOff << "($fp)" << endl;
+			_genCode(&expRec, "lw", "$t0", _mkfp(m_curOff));
 			string label = _genJumpLabel();
-			m_codeGen << "beq  $t0  $0  " << label << endl;
+			_genCode(&expRec, "beq", "$t0", "$0", label.c_str());
 
 			_match(THENTOK);
 			statmt(m_curTokenNum);
 
-			m_codeGen << label << ":" << endl;
+			label.append(":");
+			_genCode(&expRec, label.c_str());
 		}
 		else{
 			_error("ifstat");
@@ -556,27 +586,27 @@ private:
 			writeexp(m_curTokenNum, expRec);
 			if ('s' == expRec.typ)
 			{
-				m_codeGen << "la  $t0  " << _getStringLabelByIdx(expRec.loc) << endl;
-				m_codeGen << "li  $v0  4" << endl;
-				m_codeGen << "syscall" << endl;
+				_genCode(&expRec, "la", "$t0", _getStringLabelByIdx(expRec.loc).c_str());
+				_genCode(&expRec, "li", "$v0", "4");
+				_genCode(&expRec, "syscall");
 			}
 			else if ('i' == expRec.typ)
             {
-				m_codeGen << "la  $t0  " << expRec.loc << "($fp)" << endl;
-				m_codeGen << "li  $v0  1" << endl;
-				m_codeGen << "syscall" << endl;
+				_genCode(&expRec, "la", "$t0", _mkfp(expRec.loc));
+				_genCode(&expRec, "li", "$v0", "1");
+				_genCode(&expRec, "syscall");
             }
 			else if ('f' == expRec.typ)
             {
-				m_codeGen << "la  $t0  " << expRec.loc << "($fp)" << endl;
-				m_codeGen << "li  $v0  2" << endl;
-				m_codeGen << "syscall" << endl;
+				_genCode(&expRec, "la", "$t0", _mkfp(expRec.loc));
+				_genCode(&expRec, "li", "$v0", "2");
+				_genCode(&expRec, "syscall");
             }
             if (isWriteln)
             {
-                m_codeGen << "la  $t0  CR" << endl;
-                m_codeGen << "li  $v0  4" << endl;
-                m_codeGen << "syscall" << endl;
+				_genCode(&expRec, "la", "$t0", "CR");
+				_genCode(&expRec, "li", "$v0", "4");
+				_genCode(&expRec, "syscall");
             }
 			_match(RPTOK);
 		}
@@ -622,16 +652,17 @@ private:
 			if ('b' != expRec.typ){
 				printf("WARNING types not match in whilest\n");
 			}
-			m_codeGen << "lw  $t0  " << m_curOff << "($fp)" << endl;
+			_genCode(&expRec, "lw", "$t0", _mkfp(m_curOff));
 			string labelEnd = _genJumpLabel();
-			// CodeGen a jump to this label if t0 == false. 
-			m_codeGen << "beq  $t0  $0  " << labelEnd << endl;
+			// CodeGen a jump to this label if t0 == false.
+			_genCode(&expRec, "beq", "$t0", "$0", labelEnd.c_str());
 
 			_match(DOTOK);
 			statmt(m_curTokenNum);
 
-			m_codeGen << "j  " << labelStart << endl;
-			m_codeGen << labelEnd << ":" << endl;
+			_genCode(&expRec, "j", labelStart.c_str());
+			labelEnd.append(":");
+			_genCode(&expRec, labelEnd.c_str());
 		}
 		else{
 			_error("whilest");
