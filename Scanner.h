@@ -35,6 +35,7 @@ using namespace std;
 struct Token{
 	int    num;
 	string lexeme;
+	int    line;
 };
 
 class Scanner
@@ -42,6 +43,7 @@ class Scanner
 public:
 	Scanner()
 	{
+		m_curLine = 0;
 		m_findTokenIdx = 0;
 		_initTokenNums();
 	}
@@ -151,6 +153,7 @@ private:
         		else{
         			m_tmpToken.num = m_stateTokenNums[S2];
         		}
+        		m_tmpToken.line = m_curLine;
 				m_tokens.push_back(m_tmpToken);
         	}
         	else
@@ -158,6 +161,7 @@ private:
         		auto iter = m_stateTokenNums.find(m_curState);
 				if (m_stateTokenNums.end() != iter){
         			m_tmpToken.num = m_stateTokenNums[m_curState];
+        			m_tmpToken.line = m_curLine;
 					m_tokens.push_back(m_tmpToken);
         		}
         	}
@@ -175,6 +179,7 @@ private:
 		m_curBufIndex = 0;
 		m_curState = S1;
 		bool stateDone = false;
+		++m_curLine;
 
 		do
 		{
@@ -351,6 +356,8 @@ private:
 
 	int m_curBufIndex;
 	char m_lineBuffer[4096];
+
+	int m_curLine;
 
 	map<state,int>  m_stateTokenNums;
 	map<string,int> m_keywordTokenNums;

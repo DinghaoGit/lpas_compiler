@@ -1,27 +1,12 @@
-program dumb ();   (*program dumb *)
-const
-    MAX  = 500;
-var
-    in : integer; out: integer;
-
+program F003();
+var i: integer; j : real;
 begin
-   writeln("Enter a number");
-   read(in);
-   if (in > MAX) then writeln ("Too big");
-   if  in < MAX then begin
-	out := 2*x;
-      write("You entered");
-	writeln (in);
-	write("Multiply by 2 and you get");
-	writeln( out);
-      end;
-   var
-	a : integer; b: integer;
-      begin
-		a := 3; b := a+3;
-		writeln (a);
-		writeln (b);
-		writeln (in);  (* access to nonlocal*)
-		writeln (qwerty);
-	end 
+    i := 0;
+    j := 1.5;
+    while i < 99 do
+        begin
+            i := i + 1;
+            j := j * 1.5678
+        end;
+    writeln(j)
 end.
